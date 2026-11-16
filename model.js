@@ -1,7 +1,7 @@
 // Model danych: zamienia wiersze arkusza na obiekty i liczy koszty, zyski, salda i terminy.
 window.Model = (() => {
   const DAY = 86400000;
-  const RANGES = ["Auta!A2:Q", "Koszty!A2:J", "'Koszty ogólne'!A2:N", "Ustawienia!A1:F40"];
+  const RANGES = ["Auta!A2:Q", "Koszty!A2:J", "'Koszty ogólne'!A2:N", "Ustawienia!A1:F40", "Aukcje!A2:J"];
 
   // --- daty: w arkuszu numer seryjny (dni od 1899-12-30) albo tekst ---
   function toISO(v) {
@@ -141,7 +141,15 @@ window.Model = (() => {
       if (c.unknownPaid > 0.005 && !c.settled) issues.push({ car: c, text: 'koszt bez płatnika' });
     }
 
-    return { S, cars, costs, gen, carByPlate, orphanCosts, alerts, issues, today };
+    const auctions = (raw.auctions || []).map((r, i) => {
+      let t = r[1];
+      if (typeof t === 'number') { const mins = Math.round((t % 1) * 1440); t = String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0'); }
+      t = str(t).replace('.', ':');
+      if (/^\d:/.test(t)) t = '0' + t;
+      return { row: i + 2, date: toISO(r[0]), time: t, site: str(r[2]), link: str(r[3]), what: str(r[4]), repeat: str(r[5]) || 'jednorazowo', until: toISO(r[6]), note: str(r[7]), active: str(r[8]).toUpperCase() !== 'NIE', id: str(r[9]) };
+    }).filter(a => a.site || a.date);
+
+    return { S, cars, costs, gen, carByPlate, orphanCosts, alerts, issues, today, auctions };
   }
 
   // --- raporty ---
@@ -211,11 +219,23 @@ window.Model = (() => {
     };
   }
 
+  // Aukcje w danym dniu (z uwzględnieniem powtarzania)
+  function auctionsOn(M, iso) {
+    const dow = new Date(iso + 'T00:00:00Z').getUTCDay();
+    return M.auctions.filter(a => {
+      if (!a.active || !a.date || iso < a.date || (a.until && iso > a.until)) return false;
+      if (a.repeat === 'codziennie') return true;
+      if (a.repeat === 'w dni robocze') return dow >= 1 && dow <= 5;
+      if (a.repeat === 'co tydzień') return new Date(a.date + 'T00:00:00Z').getUTCDay() === dow;
+      return a.date === iso;
+    }).sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
+  }
+
   const nextId = (list, prefix) => {
     let max = 0;
     for (const x of list) { const m = (x.id || '').match(/^\D*(\d+)$/); if (m) max = Math.max(max, Number(m[1])); }
     return prefix + String(max + 1).padStart(4, '0');
   };
 
-  return { RANGES, build, report, months, balances, stock, nextId, toISO, todayISO, addDays, daysBetween, plateKey };
+  return { RANGES, auctionsOn, build, report, months, balances, stock, nextId, toISO, todayISO, addDays, daysBetween, plateKey };
 })();

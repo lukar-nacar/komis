@@ -3,7 +3,7 @@
   const { esc, zl, zl2, signCls, date, MON, plate, chip, tag, statusTag, leftTxt, ICON, CAR_SIL, toast, modal, fields, barChart } = UI;
   const CFG = window.KOMIS_CONFIG;
   const $app = document.getElementById('app');
-  const SHEET = { cars: 'Auta', costs: 'Koszty', general: "'Koszty ogólne'" };
+  const SHEET = { cars: 'Auta', costs: 'Koszty', general: "'Koszty ogólne'", auctions: 'Aukcje' };
   const COL = i => String.fromCharCode(65 + i);
   const parseAmt = v => { const n = parseFloat(String(v || '').replace(/\s/g, '').replace(',', '.')); return isNaN(n) ? null : n; };
 
@@ -17,12 +17,12 @@
       else {
         const r = await Api.batchGet(Model.RANGES);
         const v = r.valueRanges.map(x => x.values || []);
-        this.raw = { cars: v[0], costs: v[1], general: v[2], settings: v[3] };
+        this.raw = { cars: v[0], costs: v[1], general: v[2], settings: v[3], auctions: v[4] || [] };
       }
       this.M = Model.build(this.raw);
     },
     async append(key, row) {
-      if (this.mode === 'demo') { this.raw[key].push(row); }
+      if (this.mode === 'demo') { (this.raw[key] = this.raw[key] || []).push(row); }
       else await Api.append(SHEET[key] + '!A:' + COL(row.length - 1), [row]);
     },
     async set(changes) { // [{key,row,col,values:[...]}]
@@ -45,7 +45,7 @@
   }
 
   // ---------------- nawigacja ----------------
-  const NAV = [['', 'Pulpit', 'home'], ['auta', 'Auta', 'car'], ['koszty', 'Koszty', 'cost'], ['zyski', 'Zyski', 'chart'], ['rozliczenia', 'Rozliczenia', 'swap']];
+  const NAV = [['', 'Pulpit', 'home'], ['auta', 'Auta', 'car'], ['aukcje', 'Aukcje', 'cal'], ['koszty', 'Koszty', 'cost'], ['zyski', 'Zyski', 'chart'], ['rozliczenia', 'Rozliczenia', 'swap']];
   const route = () => { const h = location.hash.replace(/^#\/?/, '').split('/'); return { page: h[0] || '', arg: decodeURIComponent(h[1] || '') }; };
   // Symulacje (tylko na tym urządzeniu, nic nie zapisują w arkuszu)
   const SIMKEY = 'komis.sim';
@@ -110,7 +110,7 @@
       '<button class="btn ghost" data-act="logout">' + (Store.mode === 'demo' ? 'Wyjdź' : 'Wyloguj') + '</button></div>' +
       '<button class="btn primary add-car" data-act="new-car">+ Dodaj auto</button></header>' +
       '<main>' + inner + '</main>' +
-      '<button class="fab" data-act="' + (page === 'auta' ? 'new-car' : 'new-cost') + '">' + (page === 'auta' ? '+ Dodaj auto' : '+ Dodaj koszt') + '</button>' +
+      '<button class="fab" data-act="' + (page === 'auta' ? 'new-car' : page === 'aukcje' ? 'new-auction' : 'new-cost') + '">' + (page === 'auta' ? '+ Dodaj auto' : page === 'aukcje' ? '+ Dodaj aukcję' : '+ Dodaj koszt') + '</button>' +
       '<nav class="tabbar">' + NAV.map(([p, l, ic]) => '<a href="#/' + p + '" class="' + on(p) + '">' + ICON[ic] + l + '</a>').join('') + '</nav>';
   }
 
@@ -123,6 +123,7 @@
       else if (page === 'auto') html = pageCar(arg);
       else if (page === 'koszty') html = pageCosts();
       else if (page === 'zyski') html = pageReport();
+      else if (page === 'aukcje') html = pageAuctions();
       else if (page === 'rozliczenia') html = pageSettle();
       else html = pageHome();
     } catch (e) { console.error(e); html = '<div class="card">Błąd widoku: ' + esc(e.message) + '</div>'; }
@@ -137,6 +138,59 @@
   const balTxt = (bL, S) => Math.abs(bL) < 0.5 ? 'rozliczeni na zero' : bL > 0 ? esc(S.M) + ' → ' + esc(S.L) + ': <b>' + zl2(bL) + '</b>' : esc(S.L) + ' → ' + esc(S.M) + ': <b>' + zl2(-bL) + '</b>';
   const monthRange = ym => { const [y, m] = ym.split('-').map(Number); return [ym + '-01', new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10)]; };
 
+  // ---------------- Aukcje ----------------
+  const DOW = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];
+  const dayLabel = iso => { const d = Model.daysBetween(Store.M.today, iso); const w = DOW[new Date(iso + 'T00:00:00Z').getUTCDay()]; return d === 0 ? 'Dziś' : d === 1 ? 'Jutro' : w.charAt(0).toUpperCase() + w.slice(1) + ', ' + date(iso).slice(0, 5); };
+  const href = l => l ? (/^https?:\/\//i.test(l) ? l : 'https://' + l) : '';
+  const nowHM = () => { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  function auctionLine(a, iso) {
+    const past = iso === Store.M.today && a.time && a.time < nowHM();
+    return '<div class="it"><div class="meta"><div class="row" style="gap:10px"><b style="font-size:17px;min-width:48px' + (past ? ';color:var(--muted2)' : '') + '">' + esc(a.time || '—') + '</b>' +
+      (a.link ? '<a href="' + esc(href(a.link)) + '" target="_blank" rel="noopener"><b>' + esc(a.site) + '</b> ↗</a>' : '<b>' + esc(a.site) + '</b>') + '</div>' +
+      ((a.what || a.note) ? '<div class="sub">' + esc([a.what, a.note].filter(Boolean).join(' · ')) + '</div>' : '') + '</div>' +
+      '<div class="amt">' + (a.repeat !== 'jednorazowo' ? tag(a.repeat, 'gray') : '') + '<button class="btn ghost" data-act="edit-auction" data-row="' + a.row + '">Edytuj</button></div></div>';
+  }
+  function auctionsToday() {
+    const M = Store.M, t = M.today, tom = Model.addDays(t, 1);
+    const td = Model.auctionsOn(M, t), tm = Model.auctionsOn(M, tom);
+    return '<div class="card"><div class="row between"><h2>Aukcje dziś</h2><a class="small" href="#/aukcje">Kalendarz →</a></div><div class="list">' +
+      (td.length ? td.map(a => auctionLine(a, t)).join('') : '<div class="empty">Dziś brak aukcji.</div>') + '</div>' +
+      (tm.length ? '<div class="small muted mt">Jutro: ' + tm.map(a => esc((a.time || '') + ' ' + a.site)).join(', ') + '</div>' : '') + '</div>';
+  }
+  function pageAuctions() {
+    const M = Store.M;
+    let days = '';
+    for (let i = 0; i < 14; i++) {
+      const iso = Model.addDays(M.today, i), list = Model.auctionsOn(M, iso);
+      if (!list.length && i > 1) continue;
+      days += '<div class="card mt"><div class="row between"><h2>' + dayLabel(iso) + '</h2>' + (list.length ? tag(list.length + '', i === 0 ? 'blue' : 'gray') : '') + '</div><div class="list">' +
+        (list.length ? list.map(a => auctionLine(a, iso)).join('') : '<div class="empty">Brak aukcji.</div>') + '</div></div>';
+    }
+    const rec = M.auctions.filter(a => a.active && a.repeat !== 'jednorazowo');
+    return '<div class="head"><div><h1>Aukcje</h1><div class="sub">Najbliższe 2 tygodnie</div></div><button class="btn primary hide-m" data-act="new-auction">+ Dodaj aukcję</button></div>' +
+      days +
+      (rec.length ? '<div class="card mt"><h2>Stałe aukcje (powtarzane)</h2><div class="list">' + rec.map(a => '<div class="it"><div class="meta"><b>' + esc(a.site) + '</b><span class="sub">' + esc(a.repeat) + (a.repeat === 'co tydzień' ? ' (' + DOW[new Date(a.date + 'T00:00:00Z').getUTCDay()] + ')' : '') + ' · ' + esc(a.time || '') + (a.until ? ' · do ' + date(a.until) : '') + '</span></div><div class="amt"><button class="btn ghost" data-act="edit-auction" data-row="' + a.row + '">Edytuj</button></div></div>').join('') + '</div></div>' : '');
+  }
+  function auctionForm(a) {
+    const sites = [...new Set(Store.M.auctions.map(x => x.site).filter(Boolean).concat(['cararena.pl', 'aukcja.express.pl', 'carclick', 'Autobid', 'OPENLANE', 'BCA']))];
+    modal(a ? 'Edytuj aukcję' : 'Nowa aukcja', '<datalist id="dl-sites">' + sites.map(s => '<option value="' + esc(s) + '">').join('') + '</datalist>' + fields([
+      { name: 'site', label: 'Serwis / miejsce', list: 'dl-sites', required: true, value: a ? a.site : '', placeholder: 'np. cararena.pl' },
+      { name: 'time', label: 'Godzina', type: 'time', value: a ? a.time : '', required: true },
+      { name: 'date', label: a && a.repeat !== 'jednorazowo' ? 'Pierwszy dzień' : 'Data', type: 'date', value: a ? a.date : Model.todayISO(), required: true },
+      { name: 'repeat', label: 'Powtarzanie', type: 'select', options: ['jednorazowo', 'co tydzień', 'w dni robocze', 'codziennie'], value: a ? a.repeat : 'jednorazowo' },
+      { name: 'link', label: 'Link do aukcji', value: a ? a.link : '', full: true, placeholder: 'https://…' },
+      { name: 'what', label: 'Co (auta, maks. cena…)', value: a ? a.what : '', full: true },
+      { name: 'until', label: 'Powtarzaj do (opcjonalnie)', type: 'date', value: a ? a.until : '' },
+      { name: 'note', label: 'Uwagi', value: a ? a.note : '' }
+    ]) + (a ? '<div class="row mt"><button type="button" class="btn danger" data-act="del-auction" data-row="' + a.row + '">Usuń z kalendarza</button></div>' : ''), {
+      async onSubmit(d) {
+        const row = [d.date, d.time, d.site, d.link, d.what, d.repeat, d.until, d.note, 'TAK'];
+        if (a) await save(() => Store.set([{ key: 'auctions', row: a.row, col: 0, values: row }]), 'Zapisano aukcję');
+        else await save(() => Store.append('auctions', row.concat(Model.nextId(Store.M.auctions, 'A'))), 'Dodano aukcję ' + d.site + ' ' + d.time);
+      }
+    });
+  }
+
   // ---------------- Pulpit ----------------
   function pageHome() {
     const M = Store.M, S = M.S, t = M.today;
@@ -148,7 +202,8 @@
     for (const a of M.alerts) { let g = grp.find(x => x.car === a.car); if (!g) grp.push(g = { car: a.car, items: [] }); g.items.push(a); }
     const alerts = grp.slice(0, 8);
     return '<div class="head"><div><h1>Pulpit</h1><div class="sub">Komis LUKAR · NACAR · ' + date(t) + '</div></div>' + CAR_SIL + '</div>' +
-      '<div class="grid g4">' +
+      auctionsToday() +
+      '<div class="grid g4 mt">' +
       kpi('Zysk netto – ' + MON[Number(t.slice(5, 7)) - 1], zl(rm.net), rm.count + ' aut · koszty ogólne ' + zl(rm.genNet), signCls(rm.net)) +
       kpi('Zysk netto – ' + t.slice(0, 4), zl(ry.net), esc(S.L) + ' ' + zl(ry.L) + ' · ' + esc(S.M) + ' ' + zl(ry.M), signCls(ry.net)) +
       kpi('Na stanie', st.cars.length + ' aut', 'w autach ' + zl(st.total) + (st.old ? ' · ' + st.old + ' stoi ponad 60 dni' : '')) +
@@ -459,6 +514,13 @@
       switch (a.dataset.act) {
         case 'new-cost': return costForm(a.dataset.p || (route().page === 'auto' ? route().arg : ''));
         case 'new-car': return carForm();
+        case 'new-auction': return auctionForm(null);
+        case 'edit-auction': return auctionForm(M.auctions.find(x => x.row === Number(a.dataset.row)));
+        case 'del-auction': {
+          const row = Number(a.dataset.row);
+          document.querySelector('.modal-bg')?.remove();
+          return save(() => Store.set([{ key: 'auctions', row, col: 8, values: ['NIE'] }]), 'Usunięto aukcję z kalendarza');
+        }
         case 'sim-go': return document.getElementById('sim')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         case 'sim-add': { simOf(car).items.push({ what: '', amount: '', who: people()[0] }); saveSims(); render(); const ins = document.querySelectorAll('[data-sim=what]'); ins[ins.length - 1]?.focus(); return; }
         case 'sim-del': { simOf(car).items.splice(Number(a.dataset.i), 1); saveSims(); return render(); }

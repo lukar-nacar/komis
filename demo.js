@@ -67,7 +67,13 @@ window.Demo = (() => {
       ['Aukcja', 'zakup', 'NACAR', 'ZUS'], ['Na stanie', 'transport', 'LUKAR', 'Podatki (VAT / PIT)'], ['Sprzedany', 'naprawa / serwis', 'LUKAR/NACAR', 'Odsetki i opłaty bankowe'], ['Prywatny', 'lakierowanie', '', 'Ubezpieczenia (OC komisowe, plac)'],
       ['', 'przygotowanie / sprzątanie', '', 'Reklama i ogłoszenia'], ['', 'ubezpieczenie', '', 'Materiały i narzędzia'], ['', 'przegląd', '', 'Paliwo / dojazdy'], ['', 'ogłoszenie / reklama', '', 'Sprzedaż kół / opon / części'], ['', 'paliwo / dojazdy', '', 'Zwroty (naprawy, polisy, inne)'], ['', 'prowizja', '', 'Inne'], ['', 'inne']];
     cars.sort((a, b) => b[5] - a[5]);
-    return { cars, costs, general, settings };
+    const auctions = [
+      [serial(addD(today, -30)), '09:00', 'cararena.pl', 'https://cararena.pl', 'i30 / Ceed z leasingu', 'co tydzień', '', '', 'TAK', 'A0001'],
+      [serial(today), '11:00', 'aukcja.express.pl', 'https://aukcja.express.pl', 'Octavia 2.0 TDI – max 48 tys.', 'jednorazowo', '', '', 'TAK', 'A0002'],
+      [serial(addD(today, 1)), '10:30', 'Autobid', '', 'Passat B8', 'jednorazowo', '', '', 'TAK', 'A0003'],
+      [serial(addD(today, -60)), '13:00', 'carclick', '', '', 'w dni robocze', '', 'sprawdzić nowe ogłoszenia', 'TAK', 'A0004']
+    ];
+    return { cars, costs, general, settings, auctions };
   }
   return { make };
 })();
