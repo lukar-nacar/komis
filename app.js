@@ -47,6 +47,59 @@
   // ---------------- nawigacja ----------------
   const NAV = [['', 'Pulpit', 'home'], ['auta', 'Auta', 'car'], ['koszty', 'Koszty', 'cost'], ['zyski', 'Zyski', 'chart'], ['rozliczenia', 'Rozliczenia', 'swap']];
   const route = () => { const h = location.hash.replace(/^#\/?/, '').split('/'); return { page: h[0] || '', arg: decodeURIComponent(h[1] || '') }; };
+  // Symulacje (tylko na tym urządzeniu, nic nie zapisują w arkuszu)
+  const SIMKEY = 'komis.sim';
+  let sims = {};
+  try { sims = JSON.parse(localStorage.getItem(SIMKEY) || '{}'); } catch (e) {}
+  const saveSims = () => { try { localStorage.setItem(SIMKEY, JSON.stringify(sims)); } catch (e) {} };
+  const simOf = c => sims[c.plate] || (sims[c.plate] = { price: c.price ?? c.offer ?? '', items: [], receiver: '' });
+
+  function simCalc(c, sim) {
+    const S = Store.M.S;
+    const price = parseAmt(sim.price);
+    const extra = sim.items.reduce((s, i) => s + (parseAmt(i.amount) || 0), 0);
+    const extraL = sim.items.filter(i => i.who === S.L).reduce((s, i) => s + (parseAmt(i.amount) || 0), 0);
+    const extraM = extra - extraL;
+    const total = c.total + extra;
+    if (price === null) return { extra, total };
+    const profit = price - total;
+    const paidL = c.paidL + extraL, paidM = c.paidM + extraM;
+    const dueL = paidL + profit * S.share, dueM = paidM + profit * (1 - S.share);
+    const r = { extra, total, profit, dueL, dueM, margin: price ? profit / price : 0 };
+    if (sim.receiver) r.balL = dueL - (sim.receiver === S.L ? price : 0);
+    return r;
+  }
+
+  function simResult(c) {
+    const S = Store.M.S, sim = simOf(c), r = simCalc(c, sim);
+    if (r.profit === undefined) return '<div class="empty">Wpisz cenę sprzedaży, żeby zobaczyć wynik.</div>';
+    return '<dl class="kv"><dt>Koszty dotychczas</dt><dd>' + zl2(c.total) + '</dd><dt>Planowane koszty</dt><dd>' + zl2(r.extra) + '</dd><dt>Koszty razem</dt><dd><b>' + zl2(r.total) + '</b></dd></dl>' +
+      '<div class="road" style="margin:12px 0"></div>' +
+      '<div class="kpi"><div class="l">Zysk</div><div class="v ' + signCls(r.profit) + '">' + zl2(r.profit) + '</div><div class="s">marża ' + (r.margin * 100).toFixed(1).replace('.', ',') + '% · po ' + zl2(r.profit * S.share) + ' na osobę</div></div>' +
+      '<dl class="kv mt"><dt>Należy ' + esc(S.L) + '</dt><dd>' + zl2(r.dueL) + '</dd><dt>Należy ' + esc(S.M) + '</dt><dd>' + zl2(r.dueM) + '</dd></dl>' +
+      (r.balL !== undefined ? '<div class="mt small">Po sprzedaży: ' + balTxt(r.balL, S) + '</div>' : '');
+  }
+
+  function simCard(c) {
+    const S = Store.M.S, sim = simOf(c);
+    const opt = (v, sel) => '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(v || '—') + '</option>';
+    return '<div class="card mt" id="sim"><div class="row between wrap"><h2>Symulacja sprzedaży</h2><span class="small muted">nic nie zapisuje w bazie</span></div>' +
+      '<div class="grid g2"><div class="stack" style="gap:10px">' +
+      '<div class="form"><label class="field">Cena sprzedaży (zł)<input data-sim="price" inputmode="decimal" value="' + esc(sim.price) + '" placeholder="np. 52000"></label>' +
+      '<label class="field">Kto odbierze pieniądze<select data-sim="receiver">' + ['', S.L, S.M].map(v => opt(v, sim.receiver)).join('') + '</select></label></div>' +
+      '<div class="field">Planowane koszty (gwarancja, naprawa, prowizja…)</div>' +
+      sim.items.map((it, i) => '<div class="row" style="gap:8px"><input class="search" style="min-width:0;flex:2" data-sim="what" data-i="' + i + '" placeholder="za co" value="' + esc(it.what) + '">' +
+        '<input class="search" style="min-width:0;flex:1" data-sim="amount" data-i="' + i + '" inputmode="decimal" placeholder="kwota" value="' + esc(it.amount) + '">' +
+        '<select class="search" style="min-width:0;flex:1" data-sim="who" data-i="' + i + '">' + people().map(v => opt(v, it.who)).join('') + '</select>' +
+        '<button class="btn ghost" title="Zapisz jako prawdziwy koszt" data-act="sim-save" data-i="' + i + '" data-p="' + esc(c.plate) + '">✓</button>' +
+        '<button class="btn ghost danger" title="Usuń" data-act="sim-del" data-i="' + i + '" data-p="' + esc(c.plate) + '">×</button></div>').join('') +
+      '<div class="row wrap"><button class="btn" data-act="sim-add" data-p="' + esc(c.plate) + '">+ Planowany koszt</button>' +
+      (c.status !== 'Sprzedany' ? '<button class="btn ghost" data-act="sim-offer" data-p="' + esc(c.plate) + '">Ustaw jako cenę ofertową</button>' : '') +
+      '<button class="btn ghost" data-act="sim-reset" data-p="' + esc(c.plate) + '">Wyczyść</button></div>' +
+      '<div class="small muted">✓ przy pozycji = zapisz ją jako prawdziwy koszt auta.</div>' +
+      '</div><div id="sim-res">' + simResult(c) + '</div></div></div>';
+  }
+
   const view = { cars: { f: 'stock', firm: '', q: '' }, costs: { tab: 'gen', month: Model.todayISO().slice(0, 7) }, rep: { mode: 'year', year: new Date().getFullYear(), month: Model.todayISO().slice(0, 7), from: '', to: '' } };
 
   function shell(inner, page) {
@@ -161,6 +214,7 @@
       '<div class="row wrap">' + chip(c.firm) + '<span class="muted">' + esc(c.model) + (c.year ? ' · ' + esc(c.year) : '') + '</span>' + statusTag(c) + '</div></div>' +
       '<div class="row wrap"><button class="btn" data-act="edit-car" data-p="' + esc(c.plate) + '">Edytuj</button>' +
       '<button class="btn" data-act="new-cost" data-p="' + esc(c.plate) + '">+ Koszt</button>' +
+      (c.status !== 'Prywatny' ? '<a class="btn" href="javascript:void(0)" data-act="sim-go">Symulacja</a>' : '') +
       (!sold && c.status !== 'Prywatny' ? '<button class="btn primary" data-act="sell" data-p="' + esc(c.plate) + '">Sprzedaż</button>' : '') +
       (sold && !c.settled ? '<button class="btn primary" data-act="settle-car" data-p="' + esc(c.plate) + '">Oznacz rozliczone</button>' : '') + '</div></div>' +
       '<div class="grid g4">' + kpi('Koszty razem', zl2(c.total), c.costs.length + ' pozycji') +
@@ -171,6 +225,7 @@
       '<div class="card"><h2>Dane auta</h2><dl class="kv"><dt>VIN</dt><dd style="word-break:break-all">' + esc(c.vin || '—') + '</dd><dt>Firma</dt><dd>' + esc(c.firm || '—') + '</dd><dt>Rok</dt><dd>' + esc(c.year || '—') + '</dd><dt>Zakup</dt><dd>' + date(c.bought) + '</dd>' + (c.note ? '<dt>Uwagi</dt><dd>' + esc(c.note) + '</dd>' : '') + '</dl></div>' +
       '<div class="card"><h2>Terminy</h2><dl class="kv">' + dl('Rejestracja', c.regDue, c.registered) + (sold ? dl('Zgłoszenie zbycia', c.repDue, c.reported) : dl('OC', c.oc) + dl('Badanie techn.', c.bt)) + '</dl></div>' +
       '<div class="card"><h2>Rozliczenie</h2>' + settle + '</div></div>' +
+      (c.status !== 'Prywatny' ? simCard(c) : '') +
       '<div class="card mt"><div class="row between"><h2>Koszty</h2><button class="btn ghost" data-act="new-cost" data-p="' + esc(c.plate) + '">+ Dodaj</button></div>' +
       (c.costs.length ? '<div class="scroll-x"><table class="tbl"><thead><tr><th>Data</th><th>Za co</th><th class="hide-m">Kategoria</th><th class="hide-m">Kto</th><th class="num">Kwota</th></tr></thead><tbody>' +
         c.costs.map(k => '<tr><td>' + date(k.date) + '</td><td class="tw">' + esc(k.what) + '<div class="small muted hide-d">' + (k.who ? esc(k.who) : '<span class="neg">kto płacił?</span>') + '</div></td><td class="hide-m muted">' + esc(k.cat) + '</td><td class="hide-m">' + (k.who ? esc(k.who) : tag('?', 'amber')) + '</td><td class="num">' + zl2(k.amount) + '</td></tr>').join('') +
@@ -261,17 +316,17 @@
   const today = () => Model.todayISO();
   const people = () => [Store.M.S.L, Store.M.S.M];
 
-  function costForm(prePlate) {
+  function costForm(prePlate, pre = {}) {
     const M = Store.M, S = M.S;
     const plates = M.cars.slice().sort((a, b) => (a.status === 'Na stanie' ? 0 : 1) - (b.status === 'Na stanie' ? 0 : 1) || (b.bought || '').localeCompare(a.bought || ''));
     const dl = '<datalist id="dl-plates">' + plates.map(c => '<option value="' + esc(c.plate) + '">' + esc(c.model) + '</option>').join('') + '</datalist>';
     const body = dl + fields([
       { name: 'kind', label: 'Rodzaj', type: 'select', options: [['car', 'Koszt auta'], ['gen', 'Koszt ogólny (ZUS, podatki, OC placu…)'], ['inc', 'Przychód ogólny (sprzedaż kół, zwrot…)']], value: prePlate ? 'car' : 'car', full: true },
       { name: 'plate', label: 'Auto (nr rejestracyjny)', list: 'dl-plates', value: prePlate || '', full: true, placeholder: 'np. WE6N797' },
-      { name: 'what', label: 'Za co', required: true, full: true },
-      { name: 'amount', label: 'Kwota (zł)', inputmode: 'decimal', required: true },
+      { name: 'what', label: 'Za co', required: true, full: true, value: pre.what || '' },
+      { name: 'amount', label: 'Kwota (zł)', inputmode: 'decimal', required: true, value: pre.amount || '' },
       { name: 'date', label: 'Data', type: 'date', value: today(), required: true },
-      { name: 'who', label: 'Kto płacił / u kogo pieniądze', type: 'select', options: people(), value: Api.email && /micha/i.test(Api.email) ? S.M : S.L },
+      { name: 'who', label: 'Kto płacił / u kogo pieniądze', type: 'select', options: people(), value: pre.who || (Api.email && /micha/i.test(Api.email) ? S.M : S.L) },
       { name: 'catCar', label: 'Kategoria', type: 'select', options: S.carCats, value: S.carCats.find(x => /napraw/i.test(x)) || S.carCats[0] },
       { name: 'catGen', label: 'Kategoria', type: 'select', options: S.genCats, hidden: true },
       { name: 'firm', label: 'Firma', type: 'select', options: [['', 'wspólne / bez firmy'], 'LUKAR', 'NACAR'], hidden: true },
@@ -298,6 +353,7 @@
           if (!M.carByPlate[p]) throw new Error('Nie ma auta ' + p + ' w bazie. Dodaj je najpierw („+ Dodaj auto”).');
           const id = Model.nextId(M.costs, 'K');
           await save(() => Store.append('costs', [p, d.what, amount, d.date, d.who, d.catCar, d.doc, '', d.note, id]), 'Dodano koszt ' + zl2(amount) + ' do ' + p);
+          if (pre.onSaved) pre.onSaved();
         } else {
           const id = Model.nextId(M.gen, 'G');
           await save(() => Store.append('general', [d.date, d.what, d.catGen, d.kind === 'inc' ? 'Przychód' : 'Koszt', amount, d.who, d.firm, d.split, d.doc, '', 'NIE', d.note, id, '']), 'Dodano ' + (d.kind === 'inc' ? 'przychód' : 'koszt ogólny') + ' ' + zl2(amount));
@@ -403,6 +459,20 @@
       switch (a.dataset.act) {
         case 'new-cost': return costForm(a.dataset.p || (route().page === 'auto' ? route().arg : ''));
         case 'new-car': return carForm();
+        case 'sim-go': return document.getElementById('sim')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        case 'sim-add': { simOf(car).items.push({ what: '', amount: '', who: people()[0] }); saveSims(); render(); const ins = document.querySelectorAll('[data-sim=what]'); ins[ins.length - 1]?.focus(); return; }
+        case 'sim-del': { simOf(car).items.splice(Number(a.dataset.i), 1); saveSims(); return render(); }
+        case 'sim-reset': { delete sims[car.plate]; saveSims(); return render(); }
+        case 'sim-offer': {
+          const price = parseAmt(simOf(car).price);
+          if (price === null) return toast('Wpisz cenę w symulacji.', true);
+          return save(() => Store.set([{ key: 'cars', row: car.row, col: 7, values: [price] }]), 'Cena ofertowa ' + car.plate + ': ' + zl(price));
+        }
+        case 'sim-save': {
+          const i = Number(a.dataset.i), it = simOf(car).items[i];
+          if (!it || parseAmt(it.amount) === null) return toast('Uzupełnij kwotę tej pozycji.', true);
+          return costForm(car.plate, { what: it.what, amount: it.amount, who: it.who, onSaved: () => { simOf(car).items.splice(i, 1); saveSims(); render(); } });
+        }
         case 'sell': return sellForm(car);
         case 'edit-car': return editForm(car);
         case 'settle-car': return markSettled([car.row], []);
@@ -416,13 +486,27 @@
       }
     } catch (err) { handleErr(err); }
   });
+  function simInput(e) {
+    const f = e.target.dataset && e.target.dataset.sim;
+    if (!f) return false;
+    const c = Store.M.carByPlate[Model.plateKey(route().arg)];
+    if (!c) return true;
+    const sim = simOf(c);
+    if (e.target.dataset.i !== undefined) sim.items[Number(e.target.dataset.i)][f] = e.target.value; else sim[f] = e.target.value;
+    saveSims();
+    const box = document.getElementById('sim-res');
+    if (box) box.innerHTML = simResult(c);
+    return true;
+  }
   document.addEventListener('input', e => {
+    if (simInput(e)) return;
     const k = e.target.dataset && e.target.dataset.in;
     if (!k) return;
     const v = e.target.value;
     if (k === 'cars-q') { view.cars.q = v; const pos = e.target.selectionStart; render(); const i = document.querySelector('[data-in=cars-q]'); i.focus(); i.setSelectionRange(pos, pos); }
   });
   document.addEventListener('change', e => {
+    if (simInput(e)) return;
     const k = e.target.dataset && e.target.dataset.in;
     if (!k || !e.target.value) return;
     if (k === 'costs-month') view.costs.month = e.target.value;
